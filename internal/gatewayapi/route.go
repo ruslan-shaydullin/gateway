@@ -777,6 +777,14 @@ func (t *Translator) processBackendRef(
 
 	// An invalid backendRef never contributes traffic.
 	if err != nil {
+		if err.Reason() == status.RouteReasonEndpointsNotFound && gatewayCtx != nil {
+			if t.BackendsWithoutEndpoints == nil {
+				t.BackendsWithoutEndpoints = sets.New[BackendClusterKey]()
+			}
+			key := newBackendClusterKey(backendRef, backendNamespace)
+			key.GatewayIRKey = t.getIRKey(gatewayCtx.Gateway)
+			t.BackendsWithoutEndpoints.Insert(key)
+		}
 		return routeBackendRefDestination{ds: ds}, unstructuredRef, err
 	}
 	// An explicitly zero-weight backendRef never contributes traffic either.

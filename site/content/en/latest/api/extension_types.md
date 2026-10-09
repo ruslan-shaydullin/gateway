@@ -413,6 +413,25 @@ _Appears in:_
 | `zone` | _string_ |  false  |  | Zone defines the service zone of the backend endpoint. |
 
 
+#### BackendHealthRef
+
+
+
+BackendHealthRef selects a backend whose endpoint health gates the listener health check.
+
+_Appears in:_
+- [HealthCheckSettings](#healthchecksettings)
+
+| Field | Type | Required | Default | Description |
+| ---   | ---  | ---      | ---     | ---         |
+| `group` | _[Group](#group)_ |  false  |  | Group is the group of the referent. For example, "gateway.networking.k8s.io".<br />When unspecified or empty string, core API group is inferred. |
+| `kind` | _[Kind](#kind)_ |  false  | Service | Kind is the Kubernetes resource kind of the referent. For example<br />"Service".<br />Defaults to "Service" when not specified.<br />ExternalName services can refer to CNAME DNS records that may live<br />outside of the cluster and as such are difficult to reason about in<br />terms of conformance. They also may not be safe to forward to (see<br />CVE-2021-25740 for more information). Implementations SHOULD NOT<br />support ExternalName Services.<br />Support: Core (Services with a type other than ExternalName)<br />Support: Implementation-specific (Services with type ExternalName) |
+| `name` | _[ObjectName](#objectname)_ |  true  |  | Name is the name of the referent. |
+| `namespace` | _[Namespace](#namespace)_ |  false  |  | Namespace is the namespace of the backend. When unspecified, the local<br />namespace is inferred.<br />Note that when a namespace different than the local namespace is specified,<br />a ReferenceGrant object is required in the referent namespace to allow that<br />namespace's owner to accept the reference. See the ReferenceGrant<br />documentation for details.<br />Support: Core |
+| `port` | _[PortNumber](#portnumber)_ |  false  |  | Port specifies the destination port number to use for this resource.<br />Port is required when the referent is a Kubernetes Service. In this<br />case, the port number is the service port number, not the target port.<br />For other resources, destination port might be derived from the referent<br />resource or this field. |
+| `minHealthyPercentage` | _integer_ |  true  |  | MinHealthyPercentage is the lowest percentage of the backend's endpoints that must<br />be healthy. Without active health checks in a BackendTrafficPolicy, every endpoint<br />that Kubernetes reports as ready counts as healthy. |
+
+
 #### BackendMetrics
 
 
@@ -3663,6 +3682,7 @@ _Appears in:_
 | Field | Type | Required | Default | Description |
 | ---   | ---  | ---      | ---     | ---         |
 | `path` | _string_ |  true  |  | Path specifies the HTTP path to match on for health check requests. |
+| `backendHealth` | _[BackendHealthRef](#backendhealthref) array_ |  false  |  | BackendHealth makes the health check answer 503 while any of the listed backends<br />has fewer healthy endpoints than its MinHealthyPercentage.<br />A backend that no route attached to the Gateway sends traffic to is ignored<br />and reported in a Warning condition. |
 
 
 #### HostSettings

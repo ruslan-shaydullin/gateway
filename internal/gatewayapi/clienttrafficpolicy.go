@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -308,6 +309,10 @@ func (t *Translator) ProcessClientTrafficPolicies(
 						status.PolicyReasonUnsupportedHTTP3ClientValidation, http3WarningMessage, policy.Generation)
 				}
 
+				// Set Warning condition if a backendHealth entry did not resolve
+				status.SetWarningForPolicyAncestor(&policy.Status, &ancestorRef, t.GatewayControllerName,
+					status.PolicyReasonUnresolvedBackendHealth, t.unresolvedBackendHealthWarningMessage(policy, xdsIR, t.getIRKey(gateway.Gateway)), policy.Generation)
+
 				// Check for deprecated fields and set warning if any are found
 				if deprecatedFields := deprecatedFieldsUsedInClientTrafficPolicy(policy); len(deprecatedFields) > 0 {
 					status.SetDeprecatedFieldsWarningForPolicyAncestor(&policy.Status, &ancestorRef, t.GatewayControllerName, policy.Generation, deprecatedFields)
@@ -517,6 +522,10 @@ func (t *Translator) ProcessClientTrafficPolicies(
 						status.SetWarningForPolicyAncestor(&policy.Status, &ancestorRef, t.GatewayControllerName,
 							status.PolicyReasonUnsupportedHTTP3ClientValidation, disabledHTTP3WarningMessage(http3DisabledListeners), policy.Generation)
 					}
+
+					// Set Warning condition if a backendHealth entry did not resolve
+					status.SetWarningForPolicyAncestor(&policy.Status, &ancestorRef, t.GatewayControllerName,
+						status.PolicyReasonUnresolvedBackendHealth, t.unresolvedBackendHealthWarningMessage(policy, xdsIR, t.getIRKey(gateway.Gateway)), policy.Generation)
 
 					// Check for deprecated fields and set warning if any are found
 					if deprecatedFields := deprecatedFieldsUsedInClientTrafficPolicy(policy); len(deprecatedFields) > 0 {
@@ -822,7 +831,7 @@ func (t *Translator) translateClientTrafficPolicyForListener(
 		translateGRPCSettings(policy.Spec.GRPC, httpIR)
 
 		// Translate Health Check Settings
-		translateHealthCheckSettings(policy.Spec.HealthCheck, httpIR)
+		t.translateHealthCheckSettings(policy.Spec.HealthCheck, httpIR, irKey, gwXdsIR, policy.Namespace)
 
 		// Translate Scheme Header Transformation
 		translateSchemeHeaderTransform(policy.Spec.Scheme, httpIR)
@@ -1164,13 +1173,88 @@ func translateGRPCSettings(grpcSettings *egv1a1.GRPCSettings, httpIR *ir.HTTPLis
 	httpIR.GRPC.EnableGRPCWeb = grpcSettings.EnableWeb
 }
 
-func translateHealthCheckSettings(healthCheckSettings *egv1a1.HealthCheckSettings, httpIR *ir.HTTPListener) {
+func (t *Translator) translateHealthCheckSettings(healthCheckSettings *egv1a1.HealthCheckSettings, httpIR *ir.HTTPListener, irKey string, gwXdsIR *ir.Xds, policyNamespace string) {
 	// Return early if not set
 	if healthCheckSettings == nil {
 		return
 	}
 
-	httpIR.HealthCheck = (*ir.HealthCheckSettings)(healthCheckSettings)
+	httpIR.HealthCheck = &ir.HealthCheckSettings{Path: healthCheckSettings.Path}
+	for _, ref := range healthCheckSettings.BackendHealth {
+		for _, cluster := range t.backendHealthClusters(irKey, gwXdsIR, ref.BackendObjectReference, policyNamespace) {
+			if httpIR.HealthCheck.ClusterMinHealthyPercentages == nil {
+				httpIR.HealthCheck.ClusterMinHealthyPercentages = map[string]uint32{}
+			}
+			// A per-rule cluster can carry more than one listed backend; the stricter percentage wins.
+			httpIR.HealthCheck.ClusterMinHealthyPercentages[cluster] = max(httpIR.HealthCheck.ClusterMinHealthyPercentages[cluster], ref.MinHealthyPercentage)
+		}
+	}
+}
+
+// backendHealthClusters returns the names of the clusters in gwXdsIR that send traffic to ref:
+// its merged BackendCluster, and every route rule cluster that has ref among its own backends.
+// A Service port, when set, must match too.
+func (t *Translator) backendHealthClusters(irKey string, gwXdsIR *ir.Xds, ref gwapiv1.BackendObjectReference, policyNamespace string) []string {
+	key := backendPolicyKey{
+		Kind:      KindDerefOr(ref.Kind, resource.KindService),
+		Namespace: NamespaceDerefOr(ref.Namespace, policyNamespace),
+		Name:      string(ref.Name),
+	}
+	matches := func(md *ir.ResourceMetadata) bool {
+		return backendPolicyKeyFromMetadata(md) == key &&
+			(ref.Port == nil || md.SectionName == "" || md.SectionName == strconv.Itoa(int(*ref.Port)))
+	}
+
+	clusters := sets.New[string]()
+	for _, bc := range gwXdsIR.BackendClusters {
+		if matches(bc.Metadata) {
+			clusters.Insert(bc.Name)
+		}
+	}
+	for _, http := range gwXdsIR.HTTP {
+		for _, route := range http.Routes {
+			if route.Destination == nil {
+				continue
+			}
+			for _, ds := range route.Destination.Settings {
+				if matches(ds.Metadata) {
+					clusters.Insert(route.Destination.Name)
+				}
+			}
+		}
+	}
+
+	// A routed backend without ready endpoints has no cluster. Envoy fails the health check
+	// for a cluster it does not have, so name the cluster the backend would get.
+	backendKey := newBackendClusterKey(ref, key.Namespace)
+	backendKey.GatewayIRKey = irKey
+	if t.BackendsWithoutEndpoints.Has(backendKey) {
+		clusters.Insert(irBackendClusterName(&backendKey))
+	}
+	return sets.List(clusters)
+}
+
+// unresolvedBackendHealthWarningMessage lists the backendHealth entries of policy that match
+// no cluster of the Gateway, so the listener health check ignores them.
+func (t *Translator) unresolvedBackendHealthWarningMessage(policy *egv1a1.ClientTrafficPolicy, xdsIR resource.XdsIRMap, irKey string) string {
+	if policy.Spec.HealthCheck == nil {
+		return ""
+	}
+	var unresolved []string
+	for _, ref := range policy.Spec.HealthCheck.BackendHealth {
+		if len(t.backendHealthClusters(irKey, xdsIR[irKey], ref.BackendObjectReference, policy.Namespace)) > 0 {
+			continue
+		}
+		name := fmt.Sprintf("%s/%s", NamespaceDerefOr(ref.Namespace, policy.Namespace), ref.Name)
+		if ref.Port != nil {
+			name = fmt.Sprintf("%s:%d", name, *ref.Port)
+		}
+		unresolved = append(unresolved, name)
+	}
+	if len(unresolved) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("HealthCheck ignores backendHealth %v: no route attached to the Gateway sends traffic to it", unresolved)
 }
 
 func translateSchemeHeaderTransform(scheme *egv1a1.SchemeHeaderTransform, httpIR *ir.HTTPListener) {

@@ -942,6 +942,63 @@ func TestClientTrafficPolicyTarget(t *testing.T) {
 				"spec.headers.earlyRequestHeaders.mutations[0].write.action",
 			},
 		},
+		{
+			desc: "valid healthCheck backendHealth",
+			mutate: func(ctp *egv1a1.ClientTrafficPolicy) {
+				ctp.Spec = egv1a1.ClientTrafficPolicySpec{
+					PolicyTargetReferences: egv1a1.PolicyTargetReferences{
+						TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+							{
+								LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+									Group: gwapiv1.Group("gateway.networking.k8s.io"),
+									Kind:  gwapiv1.Kind("Gateway"),
+									Name:  gwapiv1.ObjectName("eg"),
+								},
+							},
+						},
+					},
+					HealthCheck: &egv1a1.HealthCheckSettings{
+						Path: "/ready",
+						BackendHealth: []egv1a1.BackendHealthRef{
+							{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "app", Port: new(gwapiv1.PortNumber(8080))}, MinHealthyPercentage: 100},
+						},
+					},
+				}
+			},
+			wantErrors: []string{},
+		},
+		{
+			desc: "healthCheck backendHealth with invalid minHealthyPercentage and Service without port",
+			mutate: func(ctp *egv1a1.ClientTrafficPolicy) {
+				ctp.Spec = egv1a1.ClientTrafficPolicySpec{
+					PolicyTargetReferences: egv1a1.PolicyTargetReferences{
+						TargetRefs: []gwapiv1.LocalPolicyTargetReferenceWithSectionName{
+							{
+								LocalPolicyTargetReference: gwapiv1.LocalPolicyTargetReference{
+									Group: gwapiv1.Group("gateway.networking.k8s.io"),
+									Kind:  gwapiv1.Kind("Gateway"),
+									Name:  gwapiv1.ObjectName("eg"),
+								},
+							},
+						},
+					},
+					HealthCheck: &egv1a1.HealthCheckSettings{
+						Path: "/ready",
+						BackendHealth: []egv1a1.BackendHealthRef{
+							{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "app", Port: new(gwapiv1.PortNumber(8080))}, MinHealthyPercentage: 0},
+							{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "app", Port: new(gwapiv1.PortNumber(8080))}, MinHealthyPercentage: 101},
+							{BackendObjectReference: gwapiv1.BackendObjectReference{Name: "app"}, MinHealthyPercentage: 50},
+						},
+					},
+				}
+			},
+			wantErrors: []string{
+				"spec.healthCheck.backendHealth[0].minHealthyPercentage in body should be greater than or equal to 1",
+				"spec.healthCheck.backendHealth[1].minHealthyPercentage in body should be less than or equal to 100",
+				"spec.healthCheck.backendHealth[2]",
+				"Must have port for Service reference",
+			},
+		},
 	}
 
 	for _, tc := range cases {

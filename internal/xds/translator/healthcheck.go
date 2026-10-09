@@ -12,6 +12,7 @@ import (
 	healthcheckv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/health_check/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	xdstype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -80,6 +81,13 @@ func buildHealthCheckFilter(healthCheck *ir.HealthCheckSettings) (*hcmv3.HttpFil
 				},
 			},
 		}},
+	}
+
+	if len(healthCheck.ClusterMinHealthyPercentages) > 0 {
+		healthCheckProto.ClusterMinHealthyPercentages = make(map[string]*xdstype.Percent, len(healthCheck.ClusterMinHealthyPercentages))
+		for cluster, percentage := range healthCheck.ClusterMinHealthyPercentages {
+			healthCheckProto.ClusterMinHealthyPercentages[cluster] = &xdstype.Percent{Value: float64(percentage)}
+		}
 	}
 
 	if healthCheckAny, err = anypb.New(healthCheckProto); err != nil {

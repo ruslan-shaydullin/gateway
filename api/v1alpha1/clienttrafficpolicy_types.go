@@ -467,6 +467,28 @@ type HealthCheckSettings struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Path string `json:"path"`
+
+	// BackendHealth makes the health check answer 503 while any of the listed backends
+	// has fewer healthy endpoints than its MinHealthyPercentage.
+	// A backend that no route attached to the Gateway sends traffic to is ignored
+	// and reported in a Warning condition.
+	//
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	BackendHealth []BackendHealthRef `json:"backendHealth,omitempty"`
+}
+
+// BackendHealthRef selects a backend whose endpoint health gates the listener health check.
+type BackendHealthRef struct {
+	gwapiv1.BackendObjectReference `json:",inline"`
+
+	// MinHealthyPercentage is the lowest percentage of the backend's endpoints that must
+	// be healthy. Without active health checks in a BackendTrafficPolicy, every endpoint
+	// that Kubernetes reports as ready counts as healthy.
+	//
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	MinHealthyPercentage uint32 `json:"minHealthyPercentage"`
 }
 
 // ProxyProtocolSettings configures the Proxy Protocol settings. When configured,

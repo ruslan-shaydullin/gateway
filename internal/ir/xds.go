@@ -959,7 +959,13 @@ func (c *CredentialInjection) Validate() error {
 
 // HealthCheckSettings provides HealthCheck configuration on the HTTP/HTTPS listener.
 // +k8s:deepcopy-gen=true
-type HealthCheckSettings egv1a1.HealthCheckSettings
+type HealthCheckSettings struct {
+	// Path specifies the HTTP path to match on for health check requests.
+	Path string `json:"path" yaml:"path"`
+	// ClusterMinHealthyPercentages maps a cluster name to the lowest percentage of its
+	// endpoints that must be healthy for the health check to pass.
+	ClusterMinHealthyPercentages map[string]uint32 `json:"clusterMinHealthyPercentages,omitempty" yaml:"clusterMinHealthyPercentages,omitempty"`
+}
 
 // HeaderSettings provides configuration related to header processing on the listener.
 // +k8s:deepcopy-gen=true
